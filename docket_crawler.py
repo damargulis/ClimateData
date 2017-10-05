@@ -24,8 +24,6 @@ class DocketCrawler(object):
         docket_browsers = self.get_docket_browsers()
         hrefs = [link.get_attribute('href') for link in docket_browsers]
         
-        amts = [6, 649, 11493] #the amounts expected in each documnet.
-
         for i, link in enumerate(hrefs):
             links = self.crawl_docket(link)
             print(links)
