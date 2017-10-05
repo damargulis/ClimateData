@@ -6,7 +6,6 @@ import traceback
 from urllib import urlencode
 import urlparse
 
-#DOCKET_URL = 'https://www.regulations.gov/docket?D=EPA-HQ-RCRA-2009-0640'
 DOCKET_URL = os.getenv('DOCKET_URL')
 MAX_TRIES = 5
 WAIT_TIME = 3
