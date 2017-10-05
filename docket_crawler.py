@@ -6,6 +6,7 @@ import traceback
 from urllib import urlencode
 import urlparse
 
+#DOCKET_URL = 'https://www.regulations.gov/docket?D=EPA-HQ-RCRA-2009-0640'
 DOCKET_URL = os.getenv('DOCKET_URL')
 MAX_TRIES = 5
 WAIT_TIME = 3
@@ -24,10 +25,10 @@ class DocketCrawler(object):
         docket_browsers = self.get_docket_browsers()
         hrefs = [link.get_attribute('href') for link in docket_browsers]
         
-        amt = [6, 649, 11493] #the amounts expected in each documnet.
+        amts = [6, 649, 11493] #the amounts expected in each documnet.
 
         for i, link in enumerate(hrefs):
-            links = self.crawl_docket(link, total_expected=amt[i])
+            links = self.crawl_docket(link)
             print(links)
 
     def get_docket_browsers(self):
@@ -45,10 +46,20 @@ class DocketCrawler(object):
             raise Exception('Could not find Docket Browser links')
         return links
 
-    def crawl_docket(self, link, total_expected=25, per_page=25, links=None):
-        if links is None:
-            links = []
+    def get_amount_of_documents(self, link):
+        self.driver.get(link)
+        tries = 0
+        while tries < MAX_TRIES:
+            tries += 1
+            time.sleep(WAIT_TIME)
+            elements = self.driver.find_elements_by_xpath("//*[contains(text(), 'results')]")
+            if len(elements) == 1:
+                return int(elements[0].text.split(' ')[0])
+        raise Exception("Could not find amt expected")
 
+    def crawl_docket(self, link, per_page=25):
+        total_expected = self.get_amount_of_documents(link)
+        links = []
         url_parts = list(urlparse.urlparse(link))
         query = dict(urlparse.parse_qsl(url_parts[4]))
         while True:
@@ -82,6 +93,8 @@ class DocketCrawler(object):
             raise Exception('Not all links found on ' + self.driver.current_url)
 
 def main():
+    if not DOCKET_URL:
+        raise Exception('run: `export DOCKET_URL=<docket_url>`')
     try:
         c = DocketCrawler(DOCKET_URL)
         c.crawl()
