@@ -11,11 +11,11 @@ Dockets:
      - [ ] Check each possible doc type and ensure its saved properly
    - [ ] Automate finding how many documents in each docket
    - [ ] Find/Create database to store everything, automate saving crawls directly to database (Archivers app?)
-     - [ ] If using WUSTL box -> use the box api to put docs there directly
    - [ ] Hash documents for data integrity
 
   In Progress:
    -
+   - [ ] Use box api to autoupload documents --Zach
 
   Review/Testing:
    -
