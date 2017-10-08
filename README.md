@@ -14,6 +14,7 @@ Dockets:
    - [ ] Check each possible doc type and ensure its saved properly
    - [ ] Find/Create database to store everything, automate saving crawls directly to database (Archivers app?)
    - [ ] Hash documents for data integrity
+   - [ ] Log all errors to file so they can be checked later
 
   In Progress:
    -

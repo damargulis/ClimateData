@@ -1,4 +1,5 @@
 import os
+import requests
 import selenium
 from selenium import webdriver
 import time
@@ -10,8 +11,31 @@ DOCKET_URL = os.getenv('DOCKET_URL')
 MAX_TRIES = 5
 WAIT_TIME = 3
 
+RESULTS_DIR = '../crawl_results'
+
+class FileWriter(object):
+    def __init__(self, base_dir):
+        self.BASE_DIR = base_dir
+        if not os.path.exists(base_dir):
+            os.makedirs(base_dir)
+
+    def create_folder(self, path):
+        path = os.path.join(self.BASE_DIR, path)
+        print('Creating: ', path)
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+    def write_file(self, path, file_name, text):
+        path = os.path.join(self.BASE_DIR, path, file_name)
+        print('Writing: ', path)
+        with open(path, 'w') as text_file:
+            if isinstance(text, unicode):
+                text = text.encode('utf-8')
+            text_file.write(text)
+
 class DocketCrawler(object):
-    def __init__(self, base_url):
+    def __init__(self, base_url, writer):
+        self.writer = writer
         self.driver = webdriver.Chrome('./chromedriver')
         self.base_url = base_url
         self.DOCKETS = 3 # [primary, supporting, comments]
@@ -26,7 +50,9 @@ class DocketCrawler(object):
         
         for i, link in enumerate(hrefs):
             links = self.crawl_docket(link)
-            print(links)
+            for doc_link in links:
+                self.crawl_document_page(doc_link)
+            print('Finished docket ', i)
 
     def get_docket_browsers(self):
         links = []
@@ -89,11 +115,60 @@ class DocketCrawler(object):
         else:
             raise Exception('Not all links found on ' + self.driver.current_url)
 
+    def crawl_document_page(self, link):
+        doc_name = link.split('?')[-1]
+        self.writer.create_folder(doc_name)
+        self.driver.get(link)
+        try:
+            main_text = self.get_main_text()
+            self.writer.write_file(doc_name, 'main.txt', main_text)
+        except Exception as e:
+            #TODO: write to file or ensure this is suppossed to happen somehow
+            print(e)
+            import pdb; pdb.set_trace()
+        file_links = self.get_document_links()
+        for link in file_links:
+            self.get_and_save_file(doc_name, link)
+
+    def get_and_save_file(self, doc_name, link):
+        doc = requests.get(link).content
+        doc_id = urlparse.parse_qs(urlparse.urlparse(link).query)['documentId'][0]
+        self.writer.write_file(doc_name, doc_id, doc)
+
+    def get_document_links(self):
+        tries = 0
+        while tries < MAX_TRIES:
+            tries += 1
+            elements = [
+                    element.get_attribute('href') for element 
+                    in self.driver.find_elements_by_xpath("//a") 
+                    if element.get_attribute('href') 
+                    and 'documentId' in element.get_attribute('href')
+            ]
+            if elements:
+                return elements
+            time.sleep(WAIT_TIME)
+        raise Exception('No documents found on ' + self.driver.current_url)
+
+    def get_main_text(self):
+        tries = 0
+        while tries < MAX_TRIES:
+            tries += 1
+            try:
+                #TODO: Also get the pictures that may be embedded in this
+                main_text = self.driver.find_element_by_class_name("gwt-HTML").text
+                return main_text
+                break
+            except Exception as e:
+                print(e)
+                time.sleep(WAIT_TIME)
+        raise Exception('No Text on ' + self.driver.current_url)
+
 def main():
     if not DOCKET_URL:
         raise Exception('run: `export DOCKET_URL=<docket_url>`')
     try:
-        c = DocketCrawler(DOCKET_URL)
+        c = DocketCrawler(DOCKET_URL, FileWriter(RESULTS_DIR))
         c.crawl()
     except Exception as e:
         print(e)
