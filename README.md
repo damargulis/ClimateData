@@ -8,7 +8,6 @@ Dockets:
    --
    - [ ] Find and download all pictures embedded on the page
    - [ ] Get document metadata (id, tracking number, date posted, RIN, etc)
-   - [ ] Get 'original printed format' for the primary documents
    - [ ] Download information in the "show more details" section
    - [ ] Check each possible doc type and ensure its saved properly
    - [ ] Find/Create database to store everything, automate saving crawls directly to database (Archivers app?)
