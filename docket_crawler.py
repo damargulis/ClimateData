@@ -36,9 +36,26 @@ class FileWriter(object):
                 text = text.encode('utf-8')
             text_file.write(text)
 
+class ErrorLogger(object):
+    def __init__(self, base_dir):
+        self.error_file = base_dir + "/errors.txt"
+        with open(self.error_file, 'w') as e_file:
+            e_file.write('Errors:')
+
+    def log_error(self, message):
+        print(message)
+        with open(self.error_file, 'a') as e_file:
+            e_file.write("ERROR:" + message)
+
+    def log_warning(self, message):
+        print(message)
+        with open(self.error_file, 'a') as e_file:
+            e_file.write("WARNING: " + messaage)
+
 class DocketCrawler(object):
-    def __init__(self, base_url, writer=FileWriter(RESULTS_DIR)):
+    def __init__(self, base_url, writer=FileWriter(RESULTS_DIR), logger=ErrorLogger(RESULTS_DIR)):
         self.writer = writer
+        self.logger = logger
         self.driver = webdriver.Chrome('./chromedriver')
         self.base_url = base_url
         self.DOCKETS = 3 # [primary, supporting, comments]
@@ -129,14 +146,14 @@ class DocketCrawler(object):
                 self.writer.write_file(doc_name, image['name'], image['content'])
             metadata = self.get_metadata()
             self.writer.write_file(doc_name, 'metadata.txt', metadata)
+            file_links = self.get_document_links()
+            for link in file_links:
+                self.get_and_save_file(doc_name, link)
         except Exception as e:
-            #TODO: write to file or ensure this is suppossed to happen somehow
+            self.logger.log_error("Crawl on " + link +  " failed.")
+            self.logger.log_error(e)
             print(e)
             traceback.print_exc()
-            import pdb; pdb.set_trace()
-        file_links = self.get_document_links()
-        for link in file_links:
-            self.get_and_save_file(doc_name, link)
 
     def get_and_save_file(self, doc_name, link):
         doc = requests.get(link).content
@@ -156,7 +173,8 @@ class DocketCrawler(object):
             if elements:
                 return elements
             time.sleep(WAIT_TIME)
-        raise Exception('No documents found on ' + self.driver.current_url)
+        self.logger.log_error("No documents found on " + self.driver.current_url)
+        return None
 
     def get_main_text(self):
         tries = 0
@@ -168,7 +186,8 @@ class DocketCrawler(object):
             except Exception as e:
                 print(e)
                 time.sleep(WAIT_TIME)
-        raise Exception('No Text on ' + self.driver.current_url)
+        self.logger.log_warning('No Text Found on ' + self.driver.current_url)
+        return None
 
     def get_images(self):
         imgs = self.driver.find_elements_by_tag_name("img")
@@ -203,10 +222,13 @@ def main():
     if not DOCKET_URL:
         raise Exception('run: `export DOCKET_URL=<docket_url>`')
     try:
-        c = DocketCrawler(DOCKET_URL, FileWriter(RESULTS_DIR))
+        l = ErrorLogger(RESULTS_DIR)
+        c = DocketCrawler(DOCKET_URL, logger=l)
         c.crawl()
     except Exception as e:
+        print("FATAL ERROR:")
         print(e)
+        l.log_error(e)
         traceback.print_exc()
     c.end()
 
