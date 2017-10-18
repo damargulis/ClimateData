@@ -39,6 +39,7 @@ class FileWriter(object):
 
     def write_file(self, path, file_name, text):
         file_name = file_name.replace("/", "")
+        file_name = file_name[255:]
         path = os.path.join(self.BASE_DIR, path, file_name)
         print('Writing: ', path)
         with open(path, 'w') as text_file:
@@ -160,6 +161,8 @@ class DocketCrawler(object):
         try:
             file_links = self.get_document_links()
             title = self.get_title()
+            if len(title) > 255:
+                title = title[:255]
             path = folder + '/' + title
             path = self.writer.create_folder(path)
             for i,link in enumerate(file_links):
@@ -186,6 +189,10 @@ class DocketCrawler(object):
             extension = '.xls'
         elif 'contentType=pdf' in link:
             extension = '.pdf'
+        elif 'contentType=msw8' in link or 'contentType=ms12' in link:
+            extension = '.doc'
+        elif 'contentType=ms_access' in link:
+            extension = '.mdb'
         else:
             raise Exception('Unknown file type')
         self.writer.write_file(doc_name, doc_id + '_' + str(i) + extension, doc)
@@ -214,7 +221,7 @@ class DocketCrawler(object):
                 main_text = self.driver.find_element_by_class_name("gwt-HTML").text
                 return main_text
             except Exception as e:
-                print(e)
+                #print(e)
                 time.sleep(WAIT_TIME)
         self.logger.log_warning('No Text Found on ' + self.driver.current_url)
         return None
