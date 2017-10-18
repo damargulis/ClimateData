@@ -170,6 +170,9 @@ class DocketCrawler(object):
             main_text = self.get_main_text()
             if main_text:
                 self.writer.write_file(path, title + ".txt", main_text)
+            comment = self.get_comment()
+            if comment:
+                self.writer.write_file(path, 'comment.txt', comment)
             for image in self.get_images():
                 self.writer.write_file(path, image['name'], image['content'])
             metadata = self.get_metadata()
@@ -285,6 +288,11 @@ class DocketCrawler(object):
             'name': titles[i].text + ".txt",
             'content': information_panels[i].text
         } for i in range(len(titles)) ]
+
+    def get_comment(self):
+        blocks = self.driver.find_elements_by_class_name("GIY1LSJIXD")
+        text = "\n".join([block.text for block in blocks if block.text])
+        return text
 
 def main():
     start_time = time.time()
