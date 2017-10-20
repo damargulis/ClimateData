@@ -1,5 +1,6 @@
 from base64 import decodestring
 from constants import IMAGE_BLACKLIST, BASIC_INFO_CLASS, ADDITIONAL_INFO_CLASS, METADATA_BLACKLIST
+import datetime
 import os
 import requests
 import selenium
@@ -15,7 +16,6 @@ WAIT_TIME = 1
 
 RESULTS_DIR = '../crawl_results'
 
-
 class FileWriter(object):
     def __init__(self, base_dir):
         self.BASE_DIR = base_dir
@@ -25,7 +25,6 @@ class FileWriter(object):
     def create_folder(self, path):
         path = os.path.join(self.BASE_DIR, path)
         path = os.path.normpath(path)
-        print('Creating: ', path)
         if not os.path.exists(path):
             os.makedirs(path)
             return path
@@ -39,29 +38,50 @@ class FileWriter(object):
 
     def write_file(self, path, file_name, text):
         file_name = file_name.replace("/", "")
-        file_name = file_name[255:]
+        file_name = file_name[:255]
         path = os.path.join(self.BASE_DIR, path, file_name)
-        print('Writing: ', path)
         with open(path, 'w') as text_file:
             if isinstance(text, unicode):
                 text = text.encode('utf-8')
             text_file.write(text)
 
+    def write_links(self, links):
+        file_name = self.BASE_DIR + "/links.txt"
+        with open(file_name, 'w') as links_file:
+            links_file.write("\n".join(links))
+
 class ErrorLogger(object):
     def __init__(self, base_dir):
         self.error_file = base_dir + "/errors.txt"
+        self.log_file = base_dir + "/log.txt"
+        time = datetime.datetime.now()
         with open(self.error_file, 'w') as e_file:
-            e_file.write('Errors:\n')
+            e_file.write(str(time) + '\n')
+        with open(self.log_file, 'w') as log_file:
+            log_file.write(str(time) + '\n')
 
     def log_error(self, message):
-        print(message)
+        if isinstance(message, unicode):
+            message = message.encode('utf-8')
+        time = str(datetime.datetime.now())
+        print('ERROR: ' + str(message))
         with open(self.error_file, 'a') as e_file:
-            e_file.write("ERROR:" + str(message) + '\n')
+            e_file.write("ERROR (" + time + "): " + str(message) + '\n')
 
     def log_warning(self, message):
-        print(message)
+        if isinstance(message, unicode):
+            message = message.encode('utf-8')
+        time = str(datetime.datetime.now())
+        print('WARNING: ' + str(message))
         with open(self.error_file, 'a') as e_file:
-            e_file.write("WARNING: " + str(message) + '\n')
+            e_file.write("WARNING (" + time + "): " + str(message) + '\n')
+
+    def log_message(self, message):
+        if isinstance(message, unicode):
+            message = message.encode('utf-8')
+        print('MESSAGE: ' + str(message))
+        with open(self.log_file, 'a') as log_file:
+            log_file.write(str(message) + '\n')
 
 class DocketCrawler(object):
     def __init__(self, base_url, writer=FileWriter(RESULTS_DIR), logger=ErrorLogger(RESULTS_DIR)):
@@ -82,12 +102,16 @@ class DocketCrawler(object):
         hrefs = [link.get_attribute('href') for link in docket_browsers]
         
         for i, link in enumerate(hrefs):
+            if i != 2:
+                continue
             links = self.crawl_docket(link)
+            self.writer.write_links(links)
+            self.logger.log_message('Creating ' self.DOCKETS[i])
             path = self.writer.create_folder(self.DOCKETS[i])
             for j,doc_link in enumerate(links):
                 self.crawl_document_page(doc_link, path)
-                print('Finished ' + doc_link + '.  Documents crawled: ' + str(j+1) + '/' + str(len(links)))
-            print('Finished docket ', i)
+                self.logger.log_message('Finished ' + doc_link + '.  Documents crawled: ' + str(j+1) + '/' + str(len(links)))
+            self.logger.log_message('Finished docket ' + str(i))
 
     def get_docket_browsers(self):
         links = []
@@ -134,7 +158,7 @@ class DocketCrawler(object):
                 url_parts[4] = urlencode(query)
             else:
                 break
-        print('Found:', len(links))
+        self.logger.log_message('Found: ' + str(len(links)))
         return links
 
     def get_page_links(self, expected):
@@ -164,20 +188,26 @@ class DocketCrawler(object):
             if len(title) > 255:
                 title = title[:255]
             path = folder + '/' + title
+            self.logger.log_message('Creating ' + path)
             path = self.writer.create_folder(path)
             for i,link in enumerate(file_links):
                 self.get_and_save_file(path, link, i)
             main_text = self.get_main_text()
             if main_text:
+                self.logger.log_message('Writing ' + path + '/' + title + '.txt')
                 self.writer.write_file(path, title + ".txt", main_text)
             comment = self.get_comment()
             if comment:
+                self.logger.log_message('Writing ' + path + '/comment.txt')
                 self.writer.write_file(path, 'comment.txt', comment)
             for image in self.get_images():
+                self.logger.log_message('Writing ' + path + '/' + image['name'])
                 self.writer.write_file(path, image['name'], image['content'])
             metadata = self.get_metadata()
+            self.logger.log_message('Writing ' + path + '/metadata.txt')
             self.writer.write_file(path, 'metadata.txt', metadata)
             for file_data in self.get_attachment_metadata():
+                self.logger.log_message('Writing ' + path + '/' + file_data['name'])
                 self.writer.write_file(path, file_data['name'], file_data['content'])
         except Exception as e:
             self.logger.log_error("Crawl on " + link +  " failed.")
@@ -192,12 +222,26 @@ class DocketCrawler(object):
             extension = '.xls'
         elif 'contentType=pdf' in link:
             extension = '.pdf'
-        elif 'contentType=msw8' in link or 'contentType=ms12' in link:
+        elif 'contentType=msw8' in link or 'contentType=ms12' in link or "contentType=msw12" in link:
             extension = '.doc'
         elif 'contentType=ms_access' in link:
             extension = '.mdb'
+        elif 'contentType=rtf' in link:
+            extension = '.rtf'
+        elif 'contentType=jpeg' in link:
+            extension = '.jpg'
+        elif 'contentType=ppt8' in link:
+            extension = '.ppt'
+        elif 'contentType=crtxt' in link:
+            extension = '.txt'
+        elif 'contentType=bmp' in link:
+            extension = '.bmp'
+        elif 'contentType=tiff' in link:
+            extension = '.tif'
         else:
             raise Exception('Unknown file type')
+
+        self.logger.log_message('Writing ' + doc_name + '/' + doc_id + '_' + str(i) + extension)
         self.writer.write_file(doc_name, doc_id + '_' + str(i) + extension, doc)
 
     def get_document_links(self):
@@ -222,7 +266,7 @@ class DocketCrawler(object):
             tries += 1
             try:
                 main_text = self.driver.find_element_by_class_name("gwt-HTML").text
-                return main_text
+                return main_text.strip()
             except Exception as e:
                 #print(e)
                 time.sleep(WAIT_TIME)
@@ -305,6 +349,7 @@ def main():
     except Exception as e:
         print("FATAL ERROR:")
         print(e)
+        l.log_error("FATAL:")
         l.log_error(e.message)
         traceback.print_exc()
     c.end()
