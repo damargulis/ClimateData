@@ -102,11 +102,9 @@ class DocketCrawler(object):
         hrefs = [link.get_attribute('href') for link in docket_browsers]
         
         for i, link in enumerate(hrefs):
-            if i != 2:
-                continue
             links = self.crawl_docket(link)
             self.writer.write_links(links)
-            self.logger.log_message('Creating ' self.DOCKETS[i])
+            self.logger.log_message('Creating ' + self.DOCKETS[i])
             path = self.writer.create_folder(self.DOCKETS[i])
             for j,doc_link in enumerate(links):
                 self.crawl_document_page(doc_link, path)
