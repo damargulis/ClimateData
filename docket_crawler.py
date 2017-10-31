@@ -1,5 +1,11 @@
 from base64 import decodestring
-from constants import IMAGE_BLACKLIST, BASIC_INFO_CLASS, ADDITIONAL_INFO_CLASS, METADATA_BLACKLIST
+from constants import (
+        IMAGE_BLACKLIST, 
+        BASIC_INFO_CLASS, 
+        ADDITIONAL_INFO_CLASS, 
+        METADATA_BLACKLIST, 
+        FILENAME_BLACKLIST
+)
 import datetime
 import os
 import requests
@@ -24,6 +30,8 @@ class FileWriter(object):
             os.makedirs(base_dir)
 
     def create_folder(self, path):
+        for character in FILENAME_BLACKLIST:
+            path = path.replace(character, "")
         path = os.path.join(self.BASE_DIR, path)
         path = os.path.normpath(path)
         if not os.path.exists(path):
@@ -41,28 +49,31 @@ class FileWriter(object):
         shutil.rmtree(path)
 
     def write_file(self, path, file_name, text):
-        file_name = file_name.replace("/", "")
+        blacklisted_characters = FILENAME_BLACKLIST + [ '/', '\\', ]
+        for character in blacklisted_characters:
+            file_name = file_name.replace(character, "")
         file_name = file_name[:255]
         path = os.path.join(self.BASE_DIR, path, file_name)
         with open(path, 'w') as text_file:
             if isinstance(text, unicode):
                 text = text.encode('utf-8')
             text_file.write(text)
+        return path
 
     def write_links(self, links):
-        file_name = self.BASE_DIR + "/links.txt"
+        file_name = os.path.join(self.BASE_DIR, 'links.txt')
         with open(file_name, 'w') as links_file:
             links_file.write("\n".join(links))
 
     def log_failed_links(self, links):
-        file_name = self.BASE_DIR + '/failed_links.txt'
+        file_name = os.path.join(self.BASE_DIR, 'failed_links.txt')
         with open(file_name, 'w') as links_file:
             links_file.write("\n".join([link[0] + ',' + link[1] for link in links]))
 
 class ErrorLogger(object):
     def __init__(self, base_dir):
-        self.error_file = base_dir + "/errors.txt"
-        self.log_file = base_dir + "/log.txt"
+        self.error_file = os.path.join(base_dir, 'errors.txt')
+        self.log_file = os.path.join(base_dir, 'log.txt')
         time = datetime.datetime.now()
         with open(self.error_file, 'w') as e_file:
             e_file.write(str(time) + '\n')
@@ -211,28 +222,28 @@ class DocketCrawler(object):
             title = self.get_title()
             if len(title) > 255:
                 title = title[:255]
-            path = folder + '/' + title
+            path = os.path.join(folder, title)
             path = self.writer.create_folder(path)
             self.logger.log_message('Created ' + path)
             for i,link in enumerate(file_links):
                 self.get_and_save_file(path, link, i)
             main_text = self.get_main_text()
             if main_text:
-                self.logger.log_message('Writing ' + path + '/' + title + '.txt')
-                self.writer.write_file(path, title + ".txt", main_text)
+                name = self.writer.write_file(path, title + ".txt", main_text)
+                self.logger.log_message('Wrote ' + name)
             comment = self.get_comment()
             if comment:
-                self.logger.log_message('Writing ' + path + '/comment.txt')
-                self.writer.write_file(path, 'comment.txt', comment)
+                name = self.writer.write_file(path, 'comment.txt', comment)
+                self.logger.log_message('Wrote ' + name)
             for image in self.get_images():
-                self.logger.log_message('Writing ' + path + '/' + image['name'])
-                self.writer.write_file(path, image['name'], image['content'])
+                name = self.writer.write_file(path, image['name'], image['content'])
+                self.logger.log_message('Wrote ' + name)
             metadata = self.get_metadata()
-            self.logger.log_message('Writing ' + path + '/metadata.txt')
-            self.writer.write_file(path, 'metadata.txt', metadata)
+            name = self.writer.write_file(path, 'metadata.txt', metadata)
+            self.logger.log_message('Wrote ' + name)
             for file_data in self.get_attachment_metadata():
-                self.logger.log_message('Writing ' + path + '/' + file_data['name'])
-                self.writer.write_file(path, file_data['name'], file_data['content'])
+                name = self.writer.write_file(path, file_data['name'], file_data['content'])
+                self.logger.log_message('Wrote ' + name)
             return True
         except Exception as e:
             self.logger.log_error("Crawl on " + link +  " failed.")
@@ -271,8 +282,8 @@ class DocketCrawler(object):
         else:
             raise Exception('Unknown file type')
 
-        self.logger.log_message('Writing ' + doc_name + '/' + doc_id + '_' + str(i) + extension)
-        self.writer.write_file(doc_name, doc_id + '_' + str(i) + extension, doc)
+        name = self.writer.write_file(doc_name, doc_id + '_' + str(i) + extension, doc)
+        self.logger.log_message('Wrote ' + name)
 
     def get_document_links(self):
         tries = 0
