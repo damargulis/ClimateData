@@ -5,6 +5,7 @@ import os
 import requests
 import selenium
 from selenium import webdriver
+import shutil
 import time
 import traceback
 from urllib import urlencode
@@ -36,6 +37,9 @@ class FileWriter(object):
             os.makedirs(path)
             return path
 
+    def remove_folder(self, path):
+        shutil.rmtree(path)
+
     def write_file(self, path, file_name, text):
         file_name = file_name.replace("/", "")
         file_name = file_name[:255]
@@ -49,6 +53,11 @@ class FileWriter(object):
         file_name = self.BASE_DIR + "/links.txt"
         with open(file_name, 'w') as links_file:
             links_file.write("\n".join(links))
+
+    def log_failed_links(self, links):
+        file_name = self.BASE_DIR + '/failed_links.txt'
+        with open(file_name, 'w') as links_file:
+            links_file.write("\n".join([link[0] + ',' + link[1] for link in links]))
 
 class ErrorLogger(object):
     def __init__(self, base_dir):
@@ -101,15 +110,33 @@ class DocketCrawler(object):
         docket_browsers = self.get_docket_browsers()
         hrefs = [link.get_attribute('href') for link in docket_browsers]
         
+        failed_links = []
         for i, link in enumerate(hrefs):
             links = self.crawl_docket(link)
             self.writer.write_links(links)
-            self.logger.log_message('Creating ' + self.DOCKETS[i])
             path = self.writer.create_folder(self.DOCKETS[i])
+            self.logger.log_message('Created ' + path)
             for j,doc_link in enumerate(links):
-                self.crawl_document_page(doc_link, path)
+                if j > 30:
+                    break
+                if not self.crawl_document_page(doc_link, path):
+                    failed_links.append((doc_link, path))
                 self.logger.log_message('Finished ' + doc_link + '.  Documents crawled: ' + str(j+1) + '/' + str(len(links)))
             self.logger.log_message('Finished docket ' + str(i))
+            self.logger.log_message(str(len(failed_links)) + '/' + str(len(links)) + ' Documents failed')
+        return failed_links
+
+    def retry(self, links):
+        self.logger.log_message('Retrying ' + str(len(links)) + ' links')
+        failed_links = []
+        num = 0
+        for link, path in links:
+            num += 1
+            if not self.crawl_document_page(link, path):
+                failed_links.append((link, path))
+            self.logger.log_message('Finished ' + link + '. Documents retried: ' + str(num) + '/' + str(len(links)))
+        self.logger.log_message(str(len(failed_links)) + '/' + str(len(links)) + ' Documents failed')
+        return failed_links
 
     def get_docket_browsers(self):
         links = []
@@ -180,14 +207,15 @@ class DocketCrawler(object):
 
     def crawl_document_page(self, link, folder):
         self.driver.get(link)
+        path = None
         try:
             file_links = self.get_document_links()
             title = self.get_title()
             if len(title) > 255:
                 title = title[:255]
             path = folder + '/' + title
-            self.logger.log_message('Creating ' + path)
             path = self.writer.create_folder(path)
+            self.logger.log_message('Created ' + path)
             for i,link in enumerate(file_links):
                 self.get_and_save_file(path, link, i)
             main_text = self.get_main_text()
@@ -207,11 +235,15 @@ class DocketCrawler(object):
             for file_data in self.get_attachment_metadata():
                 self.logger.log_message('Writing ' + path + '/' + file_data['name'])
                 self.writer.write_file(path, file_data['name'], file_data['content'])
+            return True
         except Exception as e:
             self.logger.log_error("Crawl on " + link +  " failed.")
             self.logger.log_error(e.message)
             print(e)
             traceback.print_exc()
+            if path:
+                self.writer.remove_folder(path)
+            return False
 
     def get_and_save_file(self, doc_name, link, i):
         doc = requests.get(link).content
@@ -230,7 +262,7 @@ class DocketCrawler(object):
             extension = '.jpg'
         elif 'contentType=ppt8' in link:
             extension = '.ppt'
-        elif 'contentType=crtxt' in link:
+        elif 'contentType=crtxt' in link or 'contentType=crtext' in link:
             extension = '.txt'
         elif 'contentType=bmp' in link:
             extension = '.bmp'
@@ -336,6 +368,9 @@ class DocketCrawler(object):
         text = "\n".join([block.text for block in blocks if block.text])
         return text
 
+    def log_failed_links(self, links):
+        self.writer.log_failed_links(links)
+
 def main():
     start_time = time.time()
     if not DOCKET_URL:
@@ -343,7 +378,15 @@ def main():
     try:
         l = ErrorLogger(RESULTS_DIR)
         c = DocketCrawler(DOCKET_URL, logger=l)
-        c.crawl()
+        failed_links = c.crawl()
+        retries = 0
+        while len(failed_links) and retries < MAX_TRIES :
+            retries += 1
+            print("Retrying " + str(retries) + "/" + str(MAX_TRIES))
+            failed_links = c.retry(failed_links)
+        if len(failed_links):
+            print(str(len(failed_links)) + ' links failed to crawl.')
+            c.log_failed_links(failed_links)
     except Exception as e:
         print("FATAL ERROR:")
         print(e)
