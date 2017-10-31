@@ -117,8 +117,6 @@ class DocketCrawler(object):
             path = self.writer.create_folder(self.DOCKETS[i])
             self.logger.log_message('Created ' + path)
             for j,doc_link in enumerate(links):
-                if j > 30:
-                    break
                 if not self.crawl_document_page(doc_link, path):
                     failed_links.append((doc_link, path))
                 self.logger.log_message('Finished ' + doc_link + '.  Documents crawled: ' + str(j+1) + '/' + str(len(links)))
