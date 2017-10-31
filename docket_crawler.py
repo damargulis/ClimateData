@@ -266,6 +266,8 @@ class DocketCrawler(object):
             extension = '.bmp'
         elif 'contentType=tiff' in link:
             extension = '.tif'
+        elif 'contentType=html' in link:
+            extension = '.html'
         else:
             raise Exception('Unknown file type')
 
