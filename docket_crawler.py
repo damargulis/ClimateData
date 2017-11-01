@@ -24,7 +24,7 @@ MAX_TRIES = 5
 WAIT_TIME = 1
 
 RESULTS_DIR = '../crawl_results'
-CHECK_FILE = '../docket_4.csv'
+CHECK_FILE = '../docket_check.csv'
 
 class FileWriter(object):
     def __init__(self, base_dir):
