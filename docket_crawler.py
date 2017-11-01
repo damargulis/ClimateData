@@ -6,12 +6,14 @@ from constants import (
         METADATA_BLACKLIST, 
         FILENAME_BLACKLIST
 )
+import csv
 import datetime
 import os
 import requests
 import selenium
 from selenium import webdriver
 import shutil
+import sys
 import time
 import traceback
 from urllib import urlencode
@@ -22,6 +24,7 @@ MAX_TRIES = 5
 WAIT_TIME = 1
 
 RESULTS_DIR = '../crawl_results'
+CHECK_FILE = '../docket_4.csv'
 
 class FileWriter(object):
     def __init__(self, base_dir):
@@ -34,6 +37,8 @@ class FileWriter(object):
             path = path.replace(character, "")
         path = os.path.join(self.BASE_DIR, path)
         path = os.path.normpath(path)
+        if sys.platform == 'win32':
+            path = ur'\\\\?\\' + path
         if not os.path.exists(path):
             os.makedirs(path)
             return path
@@ -54,6 +59,9 @@ class FileWriter(object):
             file_name = file_name.replace(character, "")
         file_name = file_name[:255]
         path = os.path.join(self.BASE_DIR, path, file_name)
+        path = os.path.normpath(path)
+        if sys.platform == 'win32':
+            path = ur'\\\\?\\' + path
         with open(path, 'w') as text_file:
             if isinstance(text, unicode):
                 text = text.encode('utf-8')
@@ -103,10 +111,55 @@ class ErrorLogger(object):
         with open(self.log_file, 'a') as log_file:
             log_file.write(str(message) + '\n')
 
+class Checker(object):
+    def __init__(self, check_file):
+        self.check_file = check_file
+        with open(check_file, 'rU') as check_file:
+            for i in range(4):
+                check_file.next()
+            reader = csv.DictReader(check_file)
+            lines = [line for line in reader]
+        self.lines = lines
+        for line in self.lines:
+            line['Crawled'] = False
+
+    def get_check_line(self, url):
+        for line in self.lines:
+            if line['Document Detail'] == url:
+                return line
+
+    def check(self, path, url, attachments):
+        check_line = self.get_check_line(url)
+        expected_attachments = (
+                0 if check_line['Attachment Count'] == 'N/A' 
+                else int(check_line['Attachment Count'])
+        )
+        if check_line['File Type'] != 'N/A':
+            expected_attachments += 1
+        if attachments < expected_attachments:
+            check_line['Crawled'] = "Failed"
+            raise Exception('Not Enough Attachments Found!')
+        check_line['Crawled'] = True
+        print('Expected: ' + str(expected_attachments))
+        print('Found: ' + str(attachments))
+
+    def write_results(self, file_name):
+        with open(file_name, 'w') as csv_file:
+            writer = csv.DictWriter(csv_file, self.lines[0].keys())
+            writer.writeheader()
+            writer.writerows(self.lines)
+
 class DocketCrawler(object):
-    def __init__(self, base_url, writer=FileWriter(RESULTS_DIR), logger=ErrorLogger(RESULTS_DIR)):
+    def __init__(
+            self, 
+            base_url, 
+            writer=FileWriter(RESULTS_DIR), 
+            logger=ErrorLogger(RESULTS_DIR), 
+            checker=Checker(CHECK_FILE)
+    ):
         self.writer = writer
         self.logger = logger
+        self.checker = checker
         self.driver = webdriver.Chrome('./chromedriver')
         self.base_url = base_url
         self.DOCKETS_NUM = 3 
@@ -225,8 +278,8 @@ class DocketCrawler(object):
             path = os.path.join(folder, title)
             path = self.writer.create_folder(path)
             self.logger.log_message('Created ' + path)
-            for i,link in enumerate(file_links):
-                self.get_and_save_file(path, link, i)
+            for i,file_link in enumerate(file_links):
+                self.get_and_save_file(path, file_link, i)
             main_text = self.get_main_text()
             if main_text:
                 name = self.writer.write_file(path, title + ".txt", main_text)
@@ -244,6 +297,7 @@ class DocketCrawler(object):
             for file_data in self.get_attachment_metadata():
                 name = self.writer.write_file(path, file_data['name'], file_data['content'])
                 self.logger.log_message('Wrote ' + name)
+            self.checker.check(path, link, len(file_links))
             return True
         except Exception as e:
             self.logger.log_error("Crawl on " + link +  " failed.")
@@ -279,6 +333,8 @@ class DocketCrawler(object):
             extension = '.tif'
         elif 'contentType=html' in link:
             extension = '.html'
+        elif 'contentType=png' in link:
+            extension = '.png'
         else:
             raise Exception('Unknown file type')
 
@@ -388,7 +444,8 @@ def main():
         raise Exception('run: `export DOCKET_URL=<docket_url>`')
     try:
         l = ErrorLogger(RESULTS_DIR)
-        c = DocketCrawler(DOCKET_URL, logger=l)
+        check = Checker(CHECK_FILE)
+        c = DocketCrawler(DOCKET_URL, logger=l, checker=check)
         failed_links = c.crawl()
         retries = 0
         while len(failed_links) and retries < MAX_TRIES :
@@ -405,6 +462,7 @@ def main():
         l.log_error(e.message)
         traceback.print_exc()
     c.end()
+    check.write_results(os.path.join(RESULTS_DIR, 'check_results.csv'))
     total_time = time.time() - start_time 
     print('Total time: ' + str(total_time))
 
