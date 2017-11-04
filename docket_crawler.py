@@ -39,8 +39,6 @@ class FileWriter(object):
         for character in FILENAME_BLACKLIST:
             path = path.replace(character, "")
         path = os.path.normpath(path)
-        if sys.platform == 'win32':
-            path = ur'\\\\?\\' + path
         if not os.path.exists(path):
             os.makedirs(path)
             return path
@@ -62,8 +60,6 @@ class FileWriter(object):
         file_name = file_name[:250] + ext
         path = os.path.join(path, file_name)
         path = os.path.normpath(path)
-        if sys.platform == 'win32':
-            path = ur'\\\\?\\' + path
         with open(path, 'w') as text_file:
             if isinstance(text, unicode):
                 text = text.encode('utf-8')
