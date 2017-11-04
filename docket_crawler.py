@@ -23,22 +23,22 @@ DOCKET_URL = os.getenv('DOCKET_URL')
 MAX_TRIES = 5
 WAIT_TIME = 1
 
-RESULTS_DIR = '../crawl_results'
+RESULTS_DIR = 'crawl_results'
 CHECK_FILE = '../docket_check.csv'
+
 
 class FileWriter(object):
     def __init__(self, base_dir):
         self.BASE_DIR = base_dir
         if not os.path.exists(base_dir):
             os.makedirs(base_dir)
+        else:
+            raise Exception(base_dir + ' Already exists')
 
     def create_folder(self, path):
         for character in FILENAME_BLACKLIST:
             path = path.replace(character, "")
-        path = os.path.join(self.BASE_DIR, path)
         path = os.path.normpath(path)
-        if sys.platform == 'win32':
-            path = ur'\\\\?\\' + path
         if not os.path.exists(path):
             os.makedirs(path)
             return path
@@ -53,15 +53,13 @@ class FileWriter(object):
     def remove_folder(self, path):
         shutil.rmtree(path)
 
-    def write_file(self, path, file_name, text):
+    def write_file(self, path, file_name, ext, text):
         blacklisted_characters = FILENAME_BLACKLIST + [ '/', '\\', ]
         for character in blacklisted_characters:
             file_name = file_name.replace(character, "")
-        file_name = file_name[:255]
-        path = os.path.join(self.BASE_DIR, path, file_name)
+        file_name = file_name[:250] + ext
+        path = os.path.join(path, file_name)
         path = os.path.normpath(path)
-        if sys.platform == 'win32':
-            path = ur'\\\\?\\' + path
         with open(path, 'w') as text_file:
             if isinstance(text, unicode):
                 text = text.encode('utf-8')
@@ -77,6 +75,30 @@ class FileWriter(object):
         file_name = os.path.join(self.BASE_DIR, 'failed_links.txt')
         with open(file_name, 'w') as links_file:
             links_file.write("\n".join([link[0] + ',' + link[1] for link in links]))
+
+class WindowsWriter(FileWriter):
+    def create_folder(self, path):
+        path_parts = path.split(os.sep)
+        for part in path_parts[:-1]:
+            os.chdir(part)
+        try:
+            final_folder = path_parts[-1][:250]
+            final_path = super(WindowsWriter, self).create_folder(path_parts[-1])
+        finally:
+            for part in path_parts[:-1]:
+                os.chdir('..')
+        return os.path.join(*path_parts[:-1] + [final_path])
+
+    def write_file(self, path, file_name, ext, text):
+        path = path.split(os.sep)
+        for part in path:
+            os.chdir(part)
+        try:
+            file_name = super(WindowsWriter, self).write_file('.', file_name, ext, text)
+        finally:
+            for part in path:
+                os.chdir('..')
+        return os.path.join(*path + [file_name])
 
 class ErrorLogger(object):
     def __init__(self, base_dir):
@@ -150,13 +172,7 @@ class Checker(object):
             writer.writerows(self.lines)
 
 class DocketCrawler(object):
-    def __init__(
-            self, 
-            base_url, 
-            writer=FileWriter(RESULTS_DIR), 
-            logger=ErrorLogger(RESULTS_DIR), 
-            checker=Checker(CHECK_FILE)
-    ):
+    def __init__(self, base_url, writer, logger, checker):
         self.writer = writer
         self.logger = logger
         self.checker = checker
@@ -178,7 +194,7 @@ class DocketCrawler(object):
         for i, link in enumerate(hrefs):
             links = self.crawl_docket(link)
             self.writer.write_links(links)
-            path = self.writer.create_folder(self.DOCKETS[i])
+            path = self.writer.create_folder(RESULTS_DIR + '/' + self.DOCKETS[i])
             self.logger.log_message('Created ' + path)
             for j,doc_link in enumerate(links):
                 if not self.crawl_document_page(doc_link, path):
@@ -282,20 +298,20 @@ class DocketCrawler(object):
                 self.get_and_save_file(path, file_link, i)
             main_text = self.get_main_text()
             if main_text:
-                name = self.writer.write_file(path, title + ".txt", main_text)
+                name = self.writer.write_file(path, title, ".txt", main_text)
                 self.logger.log_message('Wrote ' + name)
             comment = self.get_comment()
             if comment:
-                name = self.writer.write_file(path, 'comment.txt', comment)
+                name = self.writer.write_file(path, 'comment', '.txt', comment)
                 self.logger.log_message('Wrote ' + name)
             for image in self.get_images():
-                name = self.writer.write_file(path, image['name'], image['content'])
+                name = self.writer.write_file(path, image['name'], '', image['content'])
                 self.logger.log_message('Wrote ' + name)
             metadata = self.get_metadata()
-            name = self.writer.write_file(path, 'metadata.txt', metadata)
+            name = self.writer.write_file(path, 'metadata', '.txt', metadata)
             self.logger.log_message('Wrote ' + name)
             for file_data in self.get_attachment_metadata():
-                name = self.writer.write_file(path, file_data['name'], file_data['content'])
+                name = self.writer.write_file(path, file_data['name'], '.txt', file_data['content'])
                 self.logger.log_message('Wrote ' + name)
             self.checker.check(path, link, len(file_links))
             return True
@@ -313,6 +329,8 @@ class DocketCrawler(object):
         doc_id = urlparse.parse_qs(urlparse.urlparse(link).query)['documentId'][0]
         if 'contentType=excel12book' in link or 'contentType=excel8book' in link:
             extension = '.xls'
+        elif 'contentType=excel12mebook' in link:
+            extension = '.xlsm'
         elif 'contentType=pdf' in link:
             extension = '.pdf'
         elif 'contentType=msw8' in link or 'contentType=ms12' in link or "contentType=msw12" in link:
@@ -325,6 +343,8 @@ class DocketCrawler(object):
             extension = '.jpg'
         elif 'contentType=ppt8' in link:
             extension = '.ppt'
+        elif 'contentType=ppt12' in link:
+            extension = '.pptx'
         elif 'contentType=crtxt' in link or 'contentType=crtext' in link:
             extension = '.txt'
         elif 'contentType=bmp' in link:
@@ -338,7 +358,7 @@ class DocketCrawler(object):
         else:
             raise Exception('Unknown file type')
 
-        name = self.writer.write_file(doc_name, doc_id + '_' + str(i) + extension, doc)
+        name = self.writer.write_file(doc_name, doc_id + '_' + str(i), extension, doc)
         self.logger.log_message('Wrote ' + name)
 
     def get_document_links(self):
@@ -426,8 +446,8 @@ class DocketCrawler(object):
         if len(titles) != len(information_panels):
             raise Exception("Information panels mismatch")
         return [{
-            'name': titles[i].text + ".txt",
-            'content': information_panels[i].text
+            'name': titles[i].text,
+            'content': information_panels[i].text,
         } for i in range(len(titles)) ]
 
     def get_comment(self):
@@ -443,9 +463,10 @@ def main():
     if not DOCKET_URL:
         raise Exception('run: `export DOCKET_URL=<docket_url>`')
     try:
+        writer = WindowsWriter(RESULTS_DIR)
         l = ErrorLogger(RESULTS_DIR)
         check = Checker(CHECK_FILE)
-        c = DocketCrawler(DOCKET_URL, logger=l, checker=check)
+        c = DocketCrawler(DOCKET_URL, logger=l, checker=check, writer=writer)
         failed_links = c.crawl()
         retries = 0
         while len(failed_links) and retries < MAX_TRIES :

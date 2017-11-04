@@ -1,2 +1,4 @@
 *.pyc
 chromedriver
+
+crawl_results
