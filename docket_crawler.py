@@ -83,14 +83,25 @@ class WindowsWriter(FileWriter):
             os.chdir(part)
         try:
             final_folder = path_parts[-1][:250]
-            final_path = super(WindowsWriter, self).create_folder(path_parts[-1])
+            final_path = super(WindowsWriter, self).create_folder(final_folder)
         finally:
             for part in path_parts[:-1]:
                 os.chdir('..')
         return os.path.join(*path_parts[:-1] + [final_path])
 
+    def remove_folder(self, path):
+        path_parts = path.split(os.sep)
+        for part in path_parts[:-1]:
+            os.chdir(part)
+        try:
+            super(WindowsWriter, self).remove_folder(path_parts[-1])
+        finally:
+            for part in path_parts[:-1]:
+                os.chdir('..')
+
     def write_file(self, path, file_name, ext, text):
         path = path.split(os.sep)
+        file_name = file_name[:250]
         for part in path:
             os.chdir(part)
         try:
@@ -150,14 +161,12 @@ class Checker(object):
             if line['Document Detail'] == url:
                 return line
 
-    def check(self, path, url, attachments):
+    def check(self, url, attachments):
         check_line = self.get_check_line(url)
         expected_attachments = (
                 0 if check_line['Attachment Count'] == 'N/A' 
                 else int(check_line['Attachment Count'])
         )
-        if check_line['File Type'] != 'N/A':
-            expected_attachments += 1
         if attachments < expected_attachments:
             check_line['Crawled'] = "Failed"
             raise Exception('Not Enough Attachments Found!')
@@ -194,7 +203,7 @@ class DocketCrawler(object):
         for i, link in enumerate(hrefs):
             links = self.crawl_docket(link)
             self.writer.write_links(links)
-            path = self.writer.create_folder(RESULTS_DIR + '/' + self.DOCKETS[i])
+            path = self.writer.create_folder(os.path.join(RESULTS_DIR, self.DOCKETS[i]))
             self.logger.log_message('Created ' + path)
             for j,doc_link in enumerate(links):
                 if not self.crawl_document_page(doc_link, path):
@@ -287,16 +296,20 @@ class DocketCrawler(object):
         self.driver.get(link)
         path = None
         try:
+            main_text = self.get_main_text()
+            attachments = self.get_attachment_metadata()
             file_links = self.get_document_links()
+            self.checker.check(link, len(attachments))
             title = self.get_title()
-            if len(title) > 255:
-                title = title[:255]
+            title = title[:255]
             path = os.path.join(folder, title)
             path = self.writer.create_folder(path)
             self.logger.log_message('Created ' + path)
+            for file_data in attachments:
+                name = self.writer.write_file(path, file_data['name'], '.txt', file_data['content'])
+                self.logger.log_message('Wrote ' + name)
             for i,file_link in enumerate(file_links):
                 self.get_and_save_file(path, file_link, i)
-            main_text = self.get_main_text()
             if main_text:
                 name = self.writer.write_file(path, title, ".txt", main_text)
                 self.logger.log_message('Wrote ' + name)
@@ -310,10 +323,6 @@ class DocketCrawler(object):
             metadata = self.get_metadata()
             name = self.writer.write_file(path, 'metadata', '.txt', metadata)
             self.logger.log_message('Wrote ' + name)
-            for file_data in self.get_attachment_metadata():
-                name = self.writer.write_file(path, file_data['name'], '.txt', file_data['content'])
-                self.logger.log_message('Wrote ' + name)
-            self.checker.check(path, link, len(file_links))
             return True
         except Exception as e:
             self.logger.log_error("Crawl on " + link +  " failed.")
