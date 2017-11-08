@@ -22,6 +22,7 @@ import urlparse
 DOCKET_URL = os.getenv('DOCKET_URL')
 MAX_TRIES = 5
 WAIT_TIME = 1
+TIMEOUT = 5
 
 RESULTS_DIR = 'crawl_results'
 CHECK_FILE = '../docket_check.csv'
@@ -57,18 +58,29 @@ class FileWriter(object):
         blacklisted_characters = FILENAME_BLACKLIST + [ '/', '\\', ]
         for character in blacklisted_characters:
             file_name = file_name.replace(character, "")
-        file_name = file_name[:250] + ext
+        file_name = file_name[:250]
         path = os.path.join(path, file_name)
         path = os.path.normpath(path)
-        with open(path, 'w') as text_file:
-            if isinstance(text, unicode):
-                text = text.encode('utf-8')
-            text_file.write(text)
-        return path
+        if not os.path.exists(path + ext):
+            with open(path, 'w') as text_file:
+                if isinstance(text, unicode):
+                    text = text.encode('utf-8')
+                text_file.write(text)
+            return path
+        else:
+            attempt = 0
+            while os.path.exists(path + '_' + str(attempt) + ext):
+                attempt += 1
+            path = path + '_' + str(attempt) + ext
+            with open(path, 'w') as text_file:
+                if isinstance(text, unicode):
+                    text = text.encode('utf-8')
+                text_file.write(text)
+            return path
 
     def write_links(self, links):
         file_name = os.path.join(self.BASE_DIR, 'links.txt')
-        with open(file_name, 'w') as links_file:
+        with open(file_name, 'a+') as links_file:
             links_file.write("\n".join(links))
 
     def log_failed_links(self, links):
@@ -203,9 +215,10 @@ class DocketCrawler(object):
         for i, link in enumerate(hrefs):
             links = self.crawl_docket(link)
             self.writer.write_links(links)
+
             path = self.writer.create_folder(os.path.join(RESULTS_DIR, self.DOCKETS[i]))
             self.logger.log_message('Created ' + path)
-            for j,doc_link in enumerate(links):
+            for j, doc_link in enumerate(links):
                 if not self.crawl_document_page(doc_link, path):
                     failed_links.append((doc_link, path))
                 self.logger.log_message('Finished ' + doc_link + '.  Documents crawled: ' + str(j+1) + '/' + str(len(links)))
@@ -244,21 +257,26 @@ class DocketCrawler(object):
         self.driver.get(link)
         tries = 0
         while tries < MAX_TRIES:
-            tries += 1
-            time.sleep(WAIT_TIME)
-            elements = self.driver.find_elements_by_xpath("//*[contains(text(), 'results')]")
-            if len(elements) == 1:
-                text = elements[0].text.split(' ')[0]
-                text = ''.join(text.split(','))
-                return int(text)
+            try:
+                tries += 1
+                time.sleep(WAIT_TIME)
+                elements = self.driver.find_elements_by_xpath("//*[contains(text(), 'results')]")
+                if len(elements) == 1:
+                    text = elements[0].text.split(' ')[0]
+                    text = ''.join(text.split(','))
+                    return int(text)
+            except Exception as e:
+                time.sleep(WAIT_TIME)
         raise Exception("Could not find amt expected")
 
-    def crawl_docket(self, link, per_page=25):
+    def crawl_docket(self, link, per_page=200):
         total_expected = self.get_amount_of_documents(link)
         print('expected: ', total_expected)
         links = []
         url_parts = list(urlparse.urlparse(link))
         query = dict(urlparse.parse_qsl(url_parts[4]))
+        query['rpp'] = per_page
+        url_parts[4] = urlencode(query)
         while True:
             link = urlparse.urlunparse(url_parts)
             self.driver.get(link)
@@ -277,6 +295,7 @@ class DocketCrawler(object):
         hrefs = []
         tries = 0
         while len(hrefs) < expected and tries < MAX_TRIES:
+            print('Tries: ', tries)
             tries += 1
             time.sleep(WAIT_TIME)
             links = self.driver.find_elements_by_tag_name('a')
@@ -285,6 +304,8 @@ class DocketCrawler(object):
                     if link.get_attribute('href') 
                     and '/document?' in link.get_attribute('href')
             ])
+            print('Found:')
+            print(len(hrefs))
         if len(hrefs) == expected:
             return hrefs
         else:
@@ -296,10 +317,12 @@ class DocketCrawler(object):
         self.driver.get(link)
         path = None
         try:
-            main_text = self.get_main_text()
-            attachments = self.get_attachment_metadata()
             file_links = self.get_document_links()
+            print('Found ' + str(len(file_links)) + ' Files')
+            attachments = self.get_attachment_metadata()
             self.checker.check(link, len(attachments))
+            metadata = self.get_metadata()
+            main_text = self.get_main_text()
             title = self.get_title()
             title = title[:255]
             path = os.path.join(folder, title)
@@ -320,7 +343,6 @@ class DocketCrawler(object):
             for image in self.get_images():
                 name = self.writer.write_file(path, image['name'], '', image['content'])
                 self.logger.log_message('Wrote ' + name)
-            metadata = self.get_metadata()
             name = self.writer.write_file(path, 'metadata', '.txt', metadata)
             self.logger.log_message('Wrote ' + name)
             return True
@@ -334,7 +356,7 @@ class DocketCrawler(object):
             return False
 
     def get_and_save_file(self, doc_name, link, i):
-        doc = requests.get(link).content
+        doc = requests.get(link, timeout=TIMEOUT).content
         doc_id = urlparse.parse_qs(urlparse.urlparse(link).query)['documentId'][0]
         if 'contentType=excel12book' in link or 'contentType=excel8book' in link:
             extension = '.xls'
@@ -383,20 +405,15 @@ class DocketCrawler(object):
             if elements:
                 return elements
             time.sleep(WAIT_TIME)
-        self.logger.log_warning("No documents found on " + self.driver.current_url)
         return []
 
     def get_main_text(self):
         tries = 0
-        while tries < MAX_TRIES:
-            tries += 1
-            try:
-                main_text = self.driver.find_element_by_class_name("gwt-HTML").text
-                return main_text.strip()
-            except Exception as e:
-                #print(e)
-                time.sleep(WAIT_TIME)
-        self.logger.log_warning('No Text Found on ' + self.driver.current_url)
+        try:
+            main_text = self.driver.find_element_by_class_name("gwt-HTML").text
+            return main_text.strip()
+        except Exception as e:
+            self.logger.log_warning('No text found on ' + self.driver.current_url)
         return None
 
     def get_images(self):
@@ -412,7 +429,7 @@ class DocketCrawler(object):
                     name = 'image_' + str(img_num)
                     img_num += 1
                 else:
-                    content = requests.get(src).content
+                    content = requests.get(src, timeout=TIMEOUT).content
                     name = '-'.join(urlparse.urlparse(src).path.split('/'))
                 srcs_dicts.append({
                     'name': name,
@@ -421,16 +438,23 @@ class DocketCrawler(object):
         return srcs_dicts
 
     def get_metadata(self):
-        doc_id = (self.driver.current_url.split('?')[-1]).split('=')[-1]
-        basic_info_elements = self.driver.find_elements_by_class_name(BASIC_INFO_CLASS)
-        details_switch = self.driver.find_element_by_link_text("Show More Details  ")
-        details_switch.click()
-        time.sleep(WAIT_TIME)
-        additional_info_elements = self.driver.find_elements_by_class_name(ADDITIONAL_INFO_CLASS)
-        text = [element.text for element in basic_info_elements + additional_info_elements]
-        text = [line for line in '\n'.join(text).split('\n') if line not in METADATA_BLACKLIST]
-        text = ['Document Id: ' + doc_id] + text
-        return '\n'.join(text)
+        tries = 0
+        while tries < MAX_TRIES:
+            tries += 1
+            try:
+                doc_id = (self.driver.current_url.split('?')[-1]).split('=')[-1]
+                basic_info_elements = self.driver.find_elements_by_class_name(BASIC_INFO_CLASS)
+                details_switch = self.driver.find_element_by_link_text("Show More Details  ")
+                details_switch.click()
+                time.sleep(WAIT_TIME)
+                additional_info_elements = self.driver.find_elements_by_class_name(ADDITIONAL_INFO_CLASS)
+                text = [element.text for element in basic_info_elements + additional_info_elements]
+                text = [line for line in '\n'.join(text).split('\n') if line not in METADATA_BLACKLIST]
+                text = ['Document Id: ' + doc_id] + text
+                return '\n'.join(text)
+            except Exception as e:
+                time.sleep(WAIT_TIME)
+        raise Exception('Page failed to load. No metadata found.')
 
     def get_title(self):
         title = self.driver.find_element_by_class_name("GIY1LSJBID").text
@@ -498,3 +522,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
