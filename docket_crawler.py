@@ -62,11 +62,11 @@ class FileWriter(object):
         path = os.path.join(path, file_name)
         path = os.path.normpath(path)
         if not os.path.exists(path + ext):
-            with open(path, 'w') as text_file:
+            with open(path + ext, 'w') as text_file:
                 if isinstance(text, unicode):
                     text = text.encode('utf-8')
                 text_file.write(text)
-            return path
+            return path + ext
         else:
             attempt = 0
             while os.path.exists(path + '_' + str(attempt) + ext):
